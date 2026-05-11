@@ -32,6 +32,7 @@ MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "1536"))
 JOB_RETENTION_SECONDS = int(os.getenv("JOB_RETENTION_SECONDS", "3600"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 JOBS = {}
+UPLOADS = {}
 JOBS_LOCK = threading.Lock()
 
 
@@ -63,6 +64,20 @@ def cleanup_old_jobs():
             work_dir = job.get("work_dir")
             if work_dir and os.path.exists(work_dir):
                 shutil.rmtree(work_dir, ignore_errors=True)
+
+        stale_upload_ids = []
+        for upload_id, upload in UPLOADS.items():
+            age = now - upload["created_at"]
+            if age > JOB_RETENTION_SECONDS:
+                stale_upload_ids.append(upload_id)
+
+        for upload_id in stale_upload_ids:
+            upload = UPLOADS.pop(upload_id, None)
+            if not upload:
+                continue
+            temp_dir = upload.get("temp_dir")
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def run_transcription_job(job_id):
@@ -223,6 +238,84 @@ def upload_video():
     except Exception as exc:
         app.logger.exception("Subtitle generation failed")
         return jsonify({"error": str(exc)}), 500
+
+
+@app.post("/upload/init")
+def upload_init():
+    cleanup_old_jobs()
+    data = request.get_json(silent=True) or {}
+    filename = secure_filename(data.get("filename", "video.mp4"))
+    if not filename:
+        return jsonify({"error": "Invalid filename"}), 400
+    if not allowed_file(filename):
+        return jsonify({"error": "Unsupported file type"}), 400
+
+    upload_id = uuid.uuid4().hex
+    temp_dir = tempfile.mkdtemp(prefix=f"chunk_upload_{upload_id}_")
+    input_path = os.path.join(temp_dir, filename)
+    with open(input_path, "wb"):
+        pass
+
+    with JOBS_LOCK:
+        UPLOADS[upload_id] = {
+            "created_at": time.time(),
+            "filename": filename,
+            "temp_dir": temp_dir,
+            "input_path": input_path,
+            "bytes_written": 0,
+        }
+
+    return jsonify({"upload_id": upload_id}), 201
+
+
+@app.post("/upload/chunk/<upload_id>")
+def upload_chunk(upload_id):
+    cleanup_old_jobs()
+    chunk_file = request.files.get("chunk")
+    if chunk_file is None:
+        return jsonify({"error": "Missing chunk file"}), 400
+
+    with JOBS_LOCK:
+        upload = UPLOADS.get(upload_id)
+        if not upload:
+            return jsonify({"error": "Upload session not found or expired"}), 404
+        input_path = upload["input_path"]
+
+    chunk_bytes = chunk_file.read()
+    with open(input_path, "ab") as target:
+        target.write(chunk_bytes)
+
+    with JOBS_LOCK:
+        upload = UPLOADS.get(upload_id)
+        if upload:
+            upload["bytes_written"] += len(chunk_bytes)
+
+    return jsonify({"status": "ok", "received_bytes": len(chunk_bytes)}), 200
+
+
+@app.post("/upload/complete/<upload_id>")
+def upload_complete(upload_id):
+    cleanup_old_jobs()
+    with JOBS_LOCK:
+        upload = UPLOADS.pop(upload_id, None)
+        if not upload:
+            return jsonify({"error": "Upload session not found or expired"}), 404
+
+        filename = upload["filename"]
+        input_path = upload["input_path"]
+        temp_dir = upload["temp_dir"]
+        stem = Path(filename).stem
+        output_path = os.path.join(temp_dir, f"{stem}.srt")
+        job_id = uuid.uuid4().hex
+
+        ensure_job(job_id, filename)
+        JOBS[job_id]["input_path"] = input_path
+        JOBS[job_id]["output_path"] = output_path
+        JOBS[job_id]["work_dir"] = temp_dir
+
+    worker = threading.Thread(target=run_transcription_job, args=(job_id,), daemon=True)
+    worker.start()
+    return jsonify({"job_id": job_id, "status": "queued"}), 202
 
 
 @app.get("/job/<job_id>")

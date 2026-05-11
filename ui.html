@@ -223,6 +223,7 @@
         const form = document.getElementById("uploadForm");
         const POLL_INTERVAL_MS = 3000;
         const MAX_POLL_TRIES = 200;
+        const CHUNK_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB chunks
 
         videoInput.addEventListener("change", () => {
 
@@ -249,60 +250,67 @@
 
             statusText.textContent = "Queued...";
             loader.style.display = "block";
+            uploadInChunksAndProcess(selectedFile)
+                .then(() => {
+                    loader.style.display = "none";
+                    statusText.textContent = "Download ready.";
+                    fileName.textContent = "Done! Subtitle downloaded.";
+                })
+                .catch(error => {
+                    loader.style.display = "none";
+                    statusText.textContent = "";
 
-            const formData = new FormData();
+                    const fallbackMessage = "Upload or processing failed on free hosting. Please retry.";
+                    alert(error.message || fallbackMessage);
 
-formData.append(
-    "video",
-    selectedFile
-);
-
-fetch("/upload", {
-
-    method: "POST",
-    body: formData
-
-})
-.then(async response => {
-    if (!response.ok) {
-        let message = "Error generating subtitles";
-        try {
-            const payload = await response.json();
-            if (payload.error) {
-                message = payload.error;
-            }
-        } catch (e) {
-            // Keep default message if response is not JSON.
-        }
-        throw new Error(message);
-    }
-    return response.json();
-})
-.then(payload => {
-    if (!payload.job_id) {
-        throw new Error("Invalid server response");
-    }
-    statusText.textContent = "Processing...";
-    return waitForJobAndDownload(payload.job_id);
-})
-.then(() => {
-    loader.style.display = "none";
-    statusText.textContent = "Download ready.";
-    fileName.textContent = "Done! Subtitle downloaded.";
-})
-.catch(error => {
-
-    loader.style.display = "none";
-    statusText.textContent = "";
-
-    const fallbackMessage = "Request timed out on free hosting. Try a shorter clip (30-120 sec) or lower file size.";
-    alert(error.message || fallbackMessage);
-
-    console.log(error);
-
-});
+                    console.log(error);
+                });
 
         });
+
+        async function uploadInChunksAndProcess(selectedFile) {
+            const initResponse = await fetch("/upload/init", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ filename: selectedFile.name })
+            });
+            const initPayload = await safeJson(initResponse);
+            if (!initResponse.ok || !initPayload.upload_id) {
+                throw new Error(initPayload.error || "Failed to initialize upload");
+            }
+
+            const uploadId = initPayload.upload_id;
+            const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE_BYTES);
+            for (let index = 0; index < totalChunks; index += 1) {
+                const start = index * CHUNK_SIZE_BYTES;
+                const end = Math.min(start + CHUNK_SIZE_BYTES, selectedFile.size);
+                const chunk = selectedFile.slice(start, end);
+                const formData = new FormData();
+                formData.append("chunk", chunk, `${selectedFile.name}.part${index}`);
+
+                statusText.textContent = `Uploading chunks... ${index + 1}/${totalChunks}`;
+                const chunkResponse = await fetch(`/upload/chunk/${uploadId}`, {
+                    method: "POST",
+                    body: formData
+                });
+                const chunkPayload = await safeJson(chunkResponse);
+                if (!chunkResponse.ok) {
+                    throw new Error(chunkPayload.error || "Chunk upload failed");
+                }
+            }
+
+            statusText.textContent = "Upload complete. Starting transcription...";
+            const completeResponse = await fetch(`/upload/complete/${uploadId}`, {
+                method: "POST"
+            });
+            const completePayload = await safeJson(completeResponse);
+            if (!completeResponse.ok || !completePayload.job_id) {
+                throw new Error(completePayload.error || "Failed to start transcription");
+            }
+
+            statusText.textContent = "Processing...";
+            await waitForJobAndDownload(completePayload.job_id);
+        }
 
         async function waitForJobAndDownload(jobId) {
             for (let attempt = 0; attempt < MAX_POLL_TRIES; attempt += 1) {
@@ -350,6 +358,14 @@ fetch("/upload", {
             document.body.appendChild(a);
             a.click();
             a.remove();
+        }
+
+        async function safeJson(response) {
+            try {
+                return await response.json();
+            } catch (e) {
+                return {};
+            }
         }
 
     </script>
