@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import shutil
 import tempfile
@@ -34,11 +35,40 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 JOBS = {}
 UPLOADS = {}
 JOBS_LOCK = threading.Lock()
+STATE_DIR = os.path.join(tempfile.gettempdir(), "subtitle_jobs_state")
+os.makedirs(STATE_DIR, exist_ok=True)
+
+
+def job_state_path(job_id):
+    return os.path.join(STATE_DIR, f"{job_id}.json")
+
+
+def save_job_state(job_id, job):
+    payload = {
+        "status": job.get("status"),
+        "error": job.get("error"),
+        "created_at": job.get("created_at"),
+        "filename": job.get("filename"),
+        "srt_path": job.get("srt_path"),
+    }
+    with open(job_state_path(job_id), "w", encoding="utf-8") as state_file:
+        json.dump(payload, state_file)
+
+
+def load_job_state(job_id):
+    state_path = job_state_path(job_id)
+    if not os.path.exists(state_path):
+        return None
+    try:
+        with open(state_path, "r", encoding="utf-8") as state_file:
+            return json.load(state_file)
+    except Exception:
+        return None
 
 
 def ensure_job(job_id, filename):
     with JOBS_LOCK:
-        JOBS[job_id] = {
+        job = {
             "status": "queued",
             "error": None,
             "created_at": time.time(),
@@ -46,6 +76,8 @@ def ensure_job(job_id, filename):
             "srt_path": None,
             "work_dir": None,
         }
+        JOBS[job_id] = job
+        save_job_state(job_id, job)
 
 
 def cleanup_old_jobs():
@@ -64,6 +96,9 @@ def cleanup_old_jobs():
             work_dir = job.get("work_dir")
             if work_dir and os.path.exists(work_dir):
                 shutil.rmtree(work_dir, ignore_errors=True)
+            state_path = job_state_path(job_id)
+            if os.path.exists(state_path):
+                os.remove(state_path)
 
         stale_upload_ids = []
         for upload_id, upload in UPLOADS.items():
@@ -88,6 +123,7 @@ def run_transcription_job(job_id):
         job["status"] = "processing"
         input_path = job["input_path"]
         output_path = job["output_path"]
+        save_job_state(job_id, job)
 
     try:
         create_srt(input_path, output_path)
@@ -97,6 +133,7 @@ def run_transcription_job(job_id):
                 return
             job["status"] = "done"
             job["srt_path"] = output_path
+            save_job_state(job_id, job)
     except Exception as exc:
         app.logger.exception("Subtitle generation failed")
         with JOBS_LOCK:
@@ -105,6 +142,7 @@ def run_transcription_job(job_id):
                 return
             job["status"] = "error"
             job["error"] = str(exc)
+            save_job_state(job_id, job)
 
 
 def get_model():
@@ -319,6 +357,7 @@ def upload_complete(upload_id):
             "input_path": input_path,
             "output_path": output_path,
         }
+        save_job_state(job_id, JOBS[job_id])
 
     worker = threading.Thread(target=run_transcription_job, args=(job_id,), daemon=True)
     worker.start()
@@ -329,6 +368,22 @@ def upload_complete(upload_id):
 def get_job_status(job_id):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
+        if not job:
+            restored = load_job_state(job_id)
+            if restored:
+                JOBS[job_id] = {
+                    "status": restored.get("status", "error"),
+                    "error": restored.get("error"),
+                    "created_at": restored.get("created_at", time.time()),
+                    "filename": restored.get("filename"),
+                    "srt_path": restored.get("srt_path"),
+                    "work_dir": None,
+                }
+                job = JOBS[job_id]
+                if job["status"] == "processing":
+                    job["status"] = "error"
+                    job["error"] = "Server restarted during processing. Please retry this upload."
+                    save_job_state(job_id, job)
         if not job:
             return jsonify({"error": "Job not found or expired"}), 404
         payload = {"status": job["status"]}
