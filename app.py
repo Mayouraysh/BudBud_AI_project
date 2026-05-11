@@ -308,10 +308,17 @@ def upload_complete(upload_id):
         output_path = os.path.join(temp_dir, f"{stem}.srt")
         job_id = uuid.uuid4().hex
 
-        ensure_job(job_id, filename)
-        JOBS[job_id]["input_path"] = input_path
-        JOBS[job_id]["output_path"] = output_path
-        JOBS[job_id]["work_dir"] = temp_dir
+        # Create job inline to avoid nested lock deadlock.
+        JOBS[job_id] = {
+            "status": "queued",
+            "error": None,
+            "created_at": time.time(),
+            "filename": filename,
+            "srt_path": None,
+            "work_dir": temp_dir,
+            "input_path": input_path,
+            "output_path": output_path,
+        }
 
     worker = threading.Thread(target=run_transcription_job, args=(job_id,), daemon=True)
     worker.start()
