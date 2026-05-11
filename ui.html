@@ -212,6 +212,7 @@
         const fileName = document.getElementById("fileName");
         const loader = document.getElementById("loader");
         const form = document.getElementById("uploadForm");
+        const MAX_UPLOAD_MB = 80;
 
         videoInput.addEventListener("change", () => {
 
@@ -234,13 +235,20 @@
 
             }
 
+            const selectedFile = videoInput.files[0];
+            const fileSizeMb = selectedFile.size / (1024 * 1024);
+            if (fileSizeMb > MAX_UPLOAD_MB) {
+                alert(`Please upload a file smaller than ${MAX_UPLOAD_MB} MB.`);
+                return;
+            }
+
             loader.style.display = "block";
 
             const formData = new FormData();
 
 formData.append(
     "video",
-    videoInput.files[0]
+    selectedFile
 );
 
 fetch("/upload", {
@@ -287,7 +295,8 @@ fetch("/upload", {
 
     loader.style.display = "none";
 
-    alert(error.message || "Error generating subtitles");
+    const fallbackMessage = "Request timed out on free hosting. Try a shorter clip (30-120 sec) or lower file size.";
+    alert(error.message || fallbackMessage);
 
     console.log(error);
 

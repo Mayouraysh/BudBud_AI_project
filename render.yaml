@@ -4,7 +4,11 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn --workers 1 --threads 1 --timeout 300 app:app
     envVars:
       - key: WHISPER_MODEL_SIZE
-        value: small
+        value: tiny
+      - key: SUBTITLE_MODE
+        value: segment
+      - key: MAX_UPLOAD_MB
+        value: "80"

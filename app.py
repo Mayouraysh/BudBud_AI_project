@@ -23,6 +23,9 @@ ALLOWED_EXTENSIONS = {
 
 _model = None
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
+SUBTITLE_MODE = os.getenv("SUBTITLE_MODE", "segment").lower()
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "80"))
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
 def get_model():
@@ -67,11 +70,14 @@ def to_hinglish(text):
         return text
 
 
-def create_word_level_srt(video_path, output_srt):
+def create_srt(video_path, output_srt):
     model = get_model()
+    use_word_timestamps = SUBTITLE_MODE == "word"
     segments, info = model.transcribe(
         video_path,
-        word_timestamps=True,
+        word_timestamps=use_word_timestamps,
+        beam_size=1,
+        best_of=1,
         task="transcribe",
         language="hi",
         initial_prompt="Yeh Hindi audio hai. Kripya Hindi mein transcribe karo.",
@@ -81,11 +87,24 @@ def create_word_level_srt(video_path, output_srt):
     with open(output_srt, "w", encoding="utf-8") as srt_file:
         counter = 1
         for segment in segments:
-            if not segment.words:
-                continue
+            if use_word_timestamps and segment.words:
+                for word in segment.words:
+                    text = word.word.strip()
+                    if not text:
+                        continue
+                    if detected_language.startswith("hi"):
+                        text = to_hinglish(text).strip()
+                        if not text:
+                            continue
 
-            for word in segment.words:
-                text = word.word.strip()
+                    start = format_time(word.start)
+                    end = format_time(word.end)
+                    srt_file.write(f"{counter}\n")
+                    srt_file.write(f"{start} --> {end}\n")
+                    srt_file.write(f"{text}\n\n")
+                    counter += 1
+            else:
+                text = (segment.text or "").strip()
                 if not text:
                     continue
                 if detected_language.startswith("hi"):
@@ -93,8 +112,8 @@ def create_word_level_srt(video_path, output_srt):
                     if not text:
                         continue
 
-                start = format_time(word.start)
-                end = format_time(word.end)
+                start = format_time(segment.start)
+                end = format_time(segment.end)
                 srt_file.write(f"{counter}\n")
                 srt_file.write(f"{start} --> {end}\n")
                 srt_file.write(f"{text}\n\n")
@@ -126,7 +145,7 @@ def upload_video():
             output_path = os.path.join(temp_dir, f"{stem}.srt")
 
             uploaded_file.save(input_path)
-            create_word_level_srt(input_path, output_path)
+            create_srt(input_path, output_path)
 
             with open(output_path, "rb") as srt_file:
                 srt_bytes = srt_file.read()
@@ -141,6 +160,18 @@ def upload_video():
     except Exception as exc:
         app.logger.exception("Subtitle generation failed")
         return jsonify({"error": str(exc)}), 500
+
+
+@app.errorhandler(413)
+def request_entity_too_large(_error):
+    return (
+        jsonify(
+            {
+                "error": f"File too large. Max allowed size is {MAX_UPLOAD_MB} MB on free hosting."
+            }
+        ),
+        413,
+    )
 
 
 if __name__ == "__main__":
