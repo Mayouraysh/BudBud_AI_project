@@ -126,6 +126,13 @@
             margin-top:20px;
         }
 
+        .status-text{
+            margin-top:12px;
+            min-height:20px;
+            color:#cfcfcf;
+            font-size:14px;
+        }
+
         .loader span{
             width:12px;
             height:12px;
@@ -201,6 +208,7 @@
                 <span></span>
                 <span></span>
             </div>
+            <div class="status-text" id="statusText"></div>
 
         </form>
 
@@ -211,8 +219,11 @@
         const videoInput = document.getElementById("videoInput");
         const fileName = document.getElementById("fileName");
         const loader = document.getElementById("loader");
+        const statusText = document.getElementById("statusText");
         const form = document.getElementById("uploadForm");
-        const MAX_UPLOAD_MB = 80;
+        const MAX_UPLOAD_MB = 200;
+        const POLL_INTERVAL_MS = 3000;
+        const MAX_POLL_TRIES = 200;
 
         videoInput.addEventListener("change", () => {
 
@@ -242,6 +253,7 @@
                 return;
             }
 
+            statusText.textContent = "Queued...";
             loader.style.display = "block";
 
             const formData = new FormData();
@@ -270,30 +282,24 @@ fetch("/upload", {
         }
         throw new Error(message);
     }
-    return response.blob();
+    return response.json();
 })
-.then(blob => {
-
+.then(payload => {
+    if (!payload.job_id) {
+        throw new Error("Invalid server response");
+    }
+    statusText.textContent = "Processing...";
+    return waitForJobAndDownload(payload.job_id);
+})
+.then(() => {
     loader.style.display = "none";
-
-    const url = window.URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-
-    a.href = url;
-
-    a.download = videoInput.files[0].name.replace(/\.[^/.]+$/, "") + ".srt";
-
-    document.body.appendChild(a);
-
-    a.click();
-
-    a.remove();
-
+    statusText.textContent = "Download ready.";
+    fileName.textContent = "Done! Subtitle downloaded.";
 })
 .catch(error => {
 
     loader.style.display = "none";
+    statusText.textContent = "";
 
     const fallbackMessage = "Request timed out on free hosting. Try a shorter clip (30-120 sec) or lower file size.";
     alert(error.message || fallbackMessage);
@@ -303,6 +309,54 @@ fetch("/upload", {
 });
 
         });
+
+        async function waitForJobAndDownload(jobId) {
+            for (let attempt = 0; attempt < MAX_POLL_TRIES; attempt += 1) {
+                const response = await fetch(`/job/${jobId}`);
+                let payload = {};
+                try {
+                    payload = await response.json();
+                } catch (e) {
+                    // Keep default payload if response body is not JSON.
+                }
+
+                if (!response.ok) {
+                    throw new Error(payload.error || "Unable to check job status");
+                }
+
+                if (payload.status === "done") {
+                    statusText.textContent = "Download ready.";
+                    const downloadUrl = payload.download_url || `/download/${jobId}`;
+                    downloadFile(downloadUrl, videoInput.files[0].name);
+                    return;
+                }
+
+                if (payload.status === "error") {
+                    throw new Error(payload.error || "Transcription failed");
+                }
+
+                if (attempt > 0 && attempt % 8 === 0) {
+                    statusText.textContent = "Still running... please wait.";
+                } else if (payload.status === "processing") {
+                    statusText.textContent = "Processing...";
+                } else {
+                    statusText.textContent = "Queued...";
+                }
+
+                await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+            }
+
+            throw new Error("Processing took too long. Please try a shorter clip.");
+        }
+
+        function downloadFile(url, originalFileName) {
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = originalFileName.replace(/\.[^/.]+$/, "") + ".srt";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        }
 
     </script>
 

@@ -1,6 +1,10 @@
 import io
 import os
+import shutil
 import tempfile
+import threading
+import time
+import uuid
 from pathlib import Path
 
 from faster_whisper import WhisperModel
@@ -24,8 +28,68 @@ ALLOWED_EXTENSIONS = {
 _model = None
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
 SUBTITLE_MODE = os.getenv("SUBTITLE_MODE", "segment").lower()
-MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "80"))
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
+JOB_RETENTION_SECONDS = int(os.getenv("JOB_RETENTION_SECONDS", "3600"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+JOBS = {}
+JOBS_LOCK = threading.Lock()
+
+
+def ensure_job(job_id, filename):
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "status": "queued",
+            "error": None,
+            "created_at": time.time(),
+            "filename": filename,
+            "srt_path": None,
+            "work_dir": None,
+        }
+
+
+def cleanup_old_jobs():
+    now = time.time()
+    stale_ids = []
+    with JOBS_LOCK:
+        for job_id, job in JOBS.items():
+            age = now - job["created_at"]
+            if age > JOB_RETENTION_SECONDS:
+                stale_ids.append(job_id)
+
+        for job_id in stale_ids:
+            job = JOBS.pop(job_id, None)
+            if not job:
+                continue
+            work_dir = job.get("work_dir")
+            if work_dir and os.path.exists(work_dir):
+                shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def run_transcription_job(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return
+        job["status"] = "processing"
+        input_path = job["input_path"]
+        output_path = job["output_path"]
+
+    try:
+        create_srt(input_path, output_path)
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if not job:
+                return
+            job["status"] = "done"
+            job["srt_path"] = output_path
+    except Exception as exc:
+        app.logger.exception("Subtitle generation failed")
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if not job:
+                return
+            job["status"] = "error"
+            job["error"] = str(exc)
 
 
 def get_model():
@@ -127,6 +191,7 @@ def index():
 
 @app.post("/upload")
 def upload_video():
+    cleanup_old_jobs()
     if "video" not in request.files:
         return jsonify({"error": "No video file found in request"}), 400
 
@@ -139,27 +204,64 @@ def upload_video():
         return jsonify({"error": "Unsupported file type"}), 400
 
     try:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            input_path = os.path.join(temp_dir, filename)
-            stem = Path(filename).stem
-            output_path = os.path.join(temp_dir, f"{stem}.srt")
+        job_id = uuid.uuid4().hex
+        temp_dir = tempfile.mkdtemp(prefix=f"subtitle_job_{job_id}_")
+        input_path = os.path.join(temp_dir, filename)
+        stem = Path(filename).stem
+        output_path = os.path.join(temp_dir, f"{stem}.srt")
+        uploaded_file.save(input_path)
 
-            uploaded_file.save(input_path)
-            create_srt(input_path, output_path)
+        ensure_job(job_id, filename)
+        with JOBS_LOCK:
+            JOBS[job_id]["input_path"] = input_path
+            JOBS[job_id]["output_path"] = output_path
+            JOBS[job_id]["work_dir"] = temp_dir
 
-            with open(output_path, "rb") as srt_file:
-                srt_bytes = srt_file.read()
-
-        # Return in-memory bytes so Windows file locks do not break cleanup.
-        return send_file(
-            io.BytesIO(srt_bytes),
-            as_attachment=True,
-            download_name=f"{stem}.srt",
-            mimetype="application/x-subrip",
-        )
+        worker = threading.Thread(target=run_transcription_job, args=(job_id,), daemon=True)
+        worker.start()
+        return jsonify({"job_id": job_id, "status": "queued"}), 202
     except Exception as exc:
         app.logger.exception("Subtitle generation failed")
         return jsonify({"error": str(exc)}), 500
+
+
+@app.get("/job/<job_id>")
+def get_job_status(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "Job not found or expired"}), 404
+        payload = {"status": job["status"]}
+        if job["status"] == "error":
+            payload["error"] = job["error"] or "Transcription failed"
+        if job["status"] == "done":
+            payload["download_url"] = f"/download/{job_id}"
+        return jsonify(payload), 200
+
+
+@app.get("/download/<job_id>")
+def download_job_result(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "Job not found or expired"}), 404
+        if job["status"] != "done" or not job.get("srt_path"):
+            return jsonify({"error": "Subtitle file is not ready yet"}), 409
+        srt_path = job["srt_path"]
+        filename = Path(job["filename"]).stem + ".srt"
+
+    if not os.path.exists(srt_path):
+        return jsonify({"error": "Generated file no longer exists"}), 410
+
+    with open(srt_path, "rb") as srt_file:
+        srt_bytes = srt_file.read()
+
+    return send_file(
+        io.BytesIO(srt_bytes),
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/x-subrip",
+    )
 
 
 @app.errorhandler(413)
