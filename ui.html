@@ -221,7 +221,6 @@
         const loader = document.getElementById("loader");
         const statusText = document.getElementById("statusText");
         const form = document.getElementById("uploadForm");
-        const MAX_UPLOAD_MB = 200;
         const POLL_INTERVAL_MS = 3000;
         const MAX_POLL_TRIES = 200;
 
@@ -247,11 +246,6 @@
             }
 
             const selectedFile = videoInput.files[0];
-            const fileSizeMb = selectedFile.size / (1024 * 1024);
-            if (fileSizeMb > MAX_UPLOAD_MB) {
-                alert(`Please upload a file smaller than ${MAX_UPLOAD_MB} MB.`);
-                return;
-            }
 
             statusText.textContent = "Queued...";
             loader.style.display = "block";

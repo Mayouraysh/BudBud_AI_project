@@ -11,4 +11,4 @@ services:
       - key: SUBTITLE_MODE
         value: segment
       - key: MAX_UPLOAD_MB
-        value: "200"
+        value: "1536"
