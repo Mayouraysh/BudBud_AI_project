@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --workers 1 --threads 1 --timeout 300 app:app
+    startCommand: gunicorn --workers 1 --threads 4 --timeout 600 app:app
     envVars:
       - key: WHISPER_MODEL_SIZE
         value: tiny

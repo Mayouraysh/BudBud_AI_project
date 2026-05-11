@@ -222,7 +222,8 @@
         const statusText = document.getElementById("statusText");
         const form = document.getElementById("uploadForm");
         const POLL_INTERVAL_MS = 3000;
-        const MAX_POLL_TRIES = 200;
+        const MAX_POLL_TRIES = 400;
+        const MAX_STATUS_FAILURES = 20;
         const CHUNK_SIZE_BYTES = 16 * 1024 * 1024; // 16 MB chunks for faster uploads
 
         videoInput.addEventListener("change", () => {
@@ -313,18 +314,27 @@
         }
 
         async function waitForJobAndDownload(jobId) {
+            let statusFailures = 0;
             for (let attempt = 0; attempt < MAX_POLL_TRIES; attempt += 1) {
-                const response = await fetch(`/job/${jobId}`);
+                let response;
                 let payload = {};
                 try {
-                    payload = await response.json();
+                    response = await fetch(`/job/${jobId}`);
+                    payload = await safeJson(response);
                 } catch (e) {
-                    // Keep default payload if response body is not JSON.
+                    response = null;
                 }
 
-                if (!response.ok) {
-                    throw new Error(payload.error || "Unable to check job status");
+                if (!response || !response.ok) {
+                    statusFailures += 1;
+                    if (statusFailures >= MAX_STATUS_FAILURES) {
+                        throw new Error(payload.error || "Unable to check job status. Please retry in a minute.");
+                    }
+                    statusText.textContent = `Connection issue while checking status... retrying (${statusFailures}/${MAX_STATUS_FAILURES})`;
+                    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+                    continue;
                 }
+                statusFailures = 0;
 
                 if (payload.status === "done") {
                     statusText.textContent = "Download ready.";
