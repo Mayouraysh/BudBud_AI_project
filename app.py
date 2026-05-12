@@ -38,7 +38,7 @@ ALLOWED_EXTENSIONS = {
 
 _model = None
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
-SUBTITLE_MODE = os.getenv("SUBTITLE_MODE", "segment").lower()
+# SUBTITLE_MODE is now per-request (sent from the UI), not a global setting.
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "1536"))
 JOB_RETENTION_SECONDS = int(os.getenv("JOB_RETENTION_SECONDS", "3600"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
@@ -133,10 +133,11 @@ def run_transcription_job(job_id):
         job["status"] = "processing"
         input_path = job["input_path"]
         output_path = job["output_path"]
+        word_group_size = job.get("word_group_size", 1)
         save_job_state(job_id, job)
 
     try:
-        create_srt(input_path, output_path)
+        create_srt(input_path, output_path, word_group_size)
 
         # Delete the input file immediately to free disk space
         try:
@@ -217,12 +218,19 @@ def to_hinglish(text):
         return text
 
 
-def create_srt(video_path, output_srt):
+def create_srt(video_path, output_srt, word_group_size=1):
+    """Generate an SRT file from audio/video.
+
+    word_group_size controls how many words appear per subtitle entry:
+      1     = one word at a time
+      3 or 4 = 3-4 words grouped together
+      5 or 6 = 5-6 words grouped together
+    Word timestamps are always enabled so we can group precisely.
+    """
     model = get_model()
-    use_word_timestamps = SUBTITLE_MODE == "word"
     segments, info = model.transcribe(
         video_path,
-        word_timestamps=use_word_timestamps,
+        word_timestamps=True,
         beam_size=1,
         best_of=1,
         task="transcribe",
@@ -231,40 +239,45 @@ def create_srt(video_path, output_srt):
     )
     detected_language = (info.language or "hi").lower()
 
-    with open(output_srt, "w", encoding="utf-8") as srt_file:
-        counter = 1
-        for segment in segments:
-            if use_word_timestamps and segment.words:
-                for word in segment.words:
-                    text = word.word.strip()
-                    if not text:
-                        continue
-                    if detected_language.startswith("hi"):
-                        text = to_hinglish(text).strip()
-                        if not text:
-                            continue
-
-                    start = format_time(word.start)
-                    end = format_time(word.end)
-                    srt_file.write(f"{counter}\n")
-                    srt_file.write(f"{start} --> {end}\n")
-                    srt_file.write(f"{text}\n\n")
-                    counter += 1
-            else:
-                text = (segment.text or "").strip()
+    # Collect all words with their timestamps across all segments
+    all_words = []
+    for segment in segments:
+        if segment.words:
+            for word in segment.words:
+                text = word.word.strip()
                 if not text:
                     continue
                 if detected_language.startswith("hi"):
                     text = to_hinglish(text).strip()
                     if not text:
                         continue
+                all_words.append({"text": text, "start": word.start, "end": word.end})
+        else:
+            # Fallback: if no word-level timestamps, use the whole segment
+            text = (segment.text or "").strip()
+            if not text:
+                continue
+            if detected_language.startswith("hi"):
+                text = to_hinglish(text).strip()
+                if not text:
+                    continue
+            all_words.append({"text": text, "start": segment.start, "end": segment.end})
 
-                start = format_time(segment.start)
-                end = format_time(segment.end)
-                srt_file.write(f"{counter}\n")
-                srt_file.write(f"{start} --> {end}\n")
-                srt_file.write(f"{text}\n\n")
-                counter += 1
+    # Group words into chunks of word_group_size
+    group_size = max(1, int(word_group_size))
+    with open(output_srt, "w", encoding="utf-8") as srt_file:
+        counter = 1
+        for i in range(0, len(all_words), group_size):
+            group = all_words[i : i + group_size]
+            if not group:
+                continue
+            text = " ".join(w["text"] for w in group)
+            start = format_time(group[0]["start"])
+            end = format_time(group[-1]["end"])
+            srt_file.write(f"{counter}\n")
+            srt_file.write(f"{start} --> {end}\n")
+            srt_file.write(f"{text}\n\n")
+            counter += 1
 
 
 @app.get("/")
@@ -299,6 +312,7 @@ def upload_video():
             JOBS[job_id]["input_path"] = input_path
             JOBS[job_id]["output_path"] = output_path
             JOBS[job_id]["work_dir"] = temp_dir
+            JOBS[job_id]["word_group_size"] = 1
 
         worker = threading.Thread(target=run_transcription_job, args=(job_id,), daemon=True)
         worker.start()
@@ -318,6 +332,11 @@ def upload_init():
     if not allowed_file(filename):
         return jsonify({"error": "Unsupported file type"}), 400
 
+    # Word group size: 1 = single word, 4 = 3-4 words, 6 = 5-6 words
+    word_group_size = int(data.get("word_group_size", 1))
+    if word_group_size not in (1, 4, 6):
+        word_group_size = 1
+
     upload_id = uuid.uuid4().hex
     temp_dir = tempfile.mkdtemp(prefix=f"chunk_upload_{upload_id}_")
     input_path = os.path.join(temp_dir, filename)
@@ -331,6 +350,7 @@ def upload_init():
             "temp_dir": temp_dir,
             "input_path": input_path,
             "bytes_written": 0,
+            "word_group_size": word_group_size,
         }
 
     return jsonify({"upload_id": upload_id}), 201
@@ -376,6 +396,8 @@ def upload_complete(upload_id):
         output_path = os.path.join(temp_dir, f"{stem}.srt")
         job_id = uuid.uuid4().hex
 
+        word_group_size = upload.get("word_group_size", 1)
+
         # Create job inline to avoid nested lock deadlock.
         JOBS[job_id] = {
             "status": "queued",
@@ -386,6 +408,7 @@ def upload_complete(upload_id):
             "work_dir": temp_dir,
             "input_path": input_path,
             "output_path": output_path,
+            "word_group_size": word_group_size,
         }
         save_job_state(job_id, JOBS[job_id])
 

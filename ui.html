@@ -169,6 +169,57 @@
             }
         }
 
+        /* Subtitle mode selector */
+        .mode-label{
+            display:block;
+            margin-top:22px;
+            margin-bottom:10px;
+            font-size:14px;
+            color:#aaa;
+            text-align:left;
+        }
+
+        .mode-selector{
+            display:flex;
+            gap:8px;
+            width:100%;
+        }
+
+        .mode-btn{
+            flex:1;
+            padding:12px 6px;
+            border:1px solid rgba(255,255,255,0.15);
+            border-radius:12px;
+            background:transparent;
+            color:#999;
+            font-size:13px;
+            font-weight:600;
+            cursor:pointer;
+            transition:all 0.3s ease;
+            text-align:center;
+            line-height:1.3;
+            margin-top:0;
+            width:auto;
+        }
+
+        .mode-btn:hover{
+            border-color:rgba(255,255,255,0.4);
+            color:#ddd;
+            transform:none;
+        }
+
+        .mode-btn.active{
+            background:white;
+            color:black;
+            border-color:white;
+        }
+
+        .mode-btn .mode-emoji{
+            display:block;
+            font-size:18px;
+            margin-bottom:4px;
+        }
+
         /* Progress bar for audio extraction */
         .progress-bar-container{
             margin-top:16px;
@@ -224,6 +275,22 @@
                 No file selected
             </div>
 
+            <div class="mode-label">Subtitle Style</div>
+            <div class="mode-selector">
+                <button type="button" class="mode-btn active" data-group="1" id="modeBtn1">
+                    <span class="mode-emoji">🔤</span>
+                    1 Word
+                </button>
+                <button type="button" class="mode-btn" data-group="4" id="modeBtn4">
+                    <span class="mode-emoji">📝</span>
+                    3–4 Words
+                </button>
+                <button type="button" class="mode-btn" data-group="6" id="modeBtn6">
+                    <span class="mode-emoji">📄</span>
+                    5–6 Words
+                </button>
+            </div>
+
             <button type="submit" id="submitBtn">
                 Generate SRT
             </button>
@@ -253,10 +320,21 @@
         const submitBtn = document.getElementById("submitBtn");
         const progressBarContainer = document.getElementById("progressBarContainer");
         const progressBarFill = document.getElementById("progressBarFill");
+        const modeBtns = document.querySelectorAll(".mode-btn");
         const POLL_INTERVAL_MS = 3000;
         const MAX_POLL_TRIES = 400;
         const MAX_STATUS_FAILURES = 20;
         const CHUNK_SIZE_BYTES = 16 * 1024 * 1024; // 16 MB chunks for faster uploads
+        let selectedWordGroupSize = 1;
+
+        // Mode selector toggle
+        modeBtns.forEach(btn => {
+            btn.addEventListener("click", () => {
+                modeBtns.forEach(b => b.classList.remove("active"));
+                btn.classList.add("active");
+                selectedWordGroupSize = parseInt(btn.dataset.group, 10);
+            });
+        });
 
         videoInput.addEventListener("change", () => {
 
@@ -299,7 +377,7 @@
                     // Use the original video filename but with .wav extension for the server
                     const audioFileName = selectedFile.name.replace(/\.[^/.]+$/, "") + ".wav";
 
-                    return uploadInChunksAndProcess(audioBlob, audioFileName, selectedFile.name);
+                    return uploadInChunksAndProcess(audioBlob, audioFileName, selectedFile.name, selectedWordGroupSize);
                 })
                 .then(() => {
                     loader.style.display = "none";
@@ -453,11 +531,11 @@
          * Upload a blob (audio) in chunks and start processing.
          * originalVideoName is kept for naming the final SRT file.
          */
-        async function uploadInChunksAndProcess(audioBlob, audioFileName, originalVideoName) {
+        async function uploadInChunksAndProcess(audioBlob, audioFileName, originalVideoName, wordGroupSize) {
             const initResponse = await fetch("/upload/init", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ filename: audioFileName })
+                body: JSON.stringify({ filename: audioFileName, word_group_size: wordGroupSize || 1 })
             });
             const initPayload = await safeJson(initResponse);
             if (!initResponse.ok || !initPayload.upload_id) {
