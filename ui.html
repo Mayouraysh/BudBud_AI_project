@@ -1,246 +1,246 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Subtitle Generator</title>
 
     <style>
-
-        *{
-            margin:0;
-            padding:0;
-            box-sizing:border-box;
-            font-family:Arial, sans-serif;
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
         }
 
-        body{
-            background:#0f0f0f;
-            height:100vh;
-            display:flex;
-            justify-content:center;
-            align-items:center;
-            overflow:hidden;
-            color:white;
+        body {
+            background: #0f0f0f;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            color: white;
         }
 
-        .background-glow{
-            position:absolute;
-            width:600px;
-            height:600px;
-            background:radial-gradient(circle, rgba(255,255,255,0.15), transparent 70%);
-            filter:blur(80px);
-            z-index:0;
+        .background-glow {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.15), transparent 70%);
+            filter: blur(80px);
+            z-index: 0;
         }
 
-        .container{
-            position:relative;
-            z-index:1;
-            width:500px;
-            padding:40px;
-            background:rgba(28,28,28,0.8);
-            backdrop-filter:blur(20px);
-            border:1px solid rgba(255,255,255,0.1);
-            border-radius:30px;
-            text-align:center;
-            box-shadow:0 0 40px rgba(0,0,0,0.5);
+        .container {
+            position: relative;
+            z-index: 1;
+            width: 500px;
+            padding: 40px;
+            background: rgba(28, 28, 28, 0.8);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 30px;
+            text-align: center;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
         }
 
-        h1{
-            font-size:42px;
-            margin-bottom:10px;
-            font-weight:700;
+        h1 {
+            font-size: 42px;
+            margin-bottom: 10px;
+            font-weight: 700;
         }
 
-        p{
-            color:#bdbdbd;
-            margin-bottom:35px;
-            line-height:1.5;
+        p {
+            color: #bdbdbd;
+            margin-bottom: 35px;
+            line-height: 1.5;
         }
 
-        .upload-box{
-            position:relative;
-            width:100%;
-            height:180px;
-            border:2px dashed rgba(255,255,255,0.15);
-            border-radius:20px;
-            display:flex;
-            justify-content:center;
-            align-items:center;
-            flex-direction:column;
-            cursor:pointer;
-            transition:0.3s;
-            overflow:hidden;
+        .upload-box {
+            position: relative;
+            width: 100%;
+            height: 180px;
+            border: 2px dashed rgba(255, 255, 255, 0.15);
+            border-radius: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            cursor: pointer;
+            transition: 0.3s;
+            overflow: hidden;
         }
 
-        .upload-box:hover{
-            border-color:white;
-            transform:scale(1.01);
+        .upload-box:hover {
+            border-color: white;
+            transform: scale(1.01);
         }
 
-        .upload-box input{
-            position:absolute;
-            width:100%;
-            height:100%;
-            opacity:0;
-            cursor:pointer;
+        .upload-box input {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
         }
 
-        .upload-icon{
-            font-size:55px;
-            margin-bottom:10px;
+        .upload-icon {
+            font-size: 55px;
+            margin-bottom: 10px;
         }
 
-        .upload-text{
-            font-size:16px;
-            color:#d0d0d0;
+        .upload-text {
+            font-size: 16px;
+            color: #d0d0d0;
         }
 
-        .file-name{
-            margin-top:18px;
-            color:#8f8f8f;
-            font-size:14px;
-            word-break:break-all;
+        .file-name {
+            margin-top: 18px;
+            color: #8f8f8f;
+            font-size: 14px;
+            word-break: break-all;
         }
 
-        button{
-            margin-top:30px;
-            width:100%;
-            padding:16px;
-            border:none;
-            border-radius:14px;
-            background:white;
-            color:black;
-            font-size:17px;
-            font-weight:bold;
-            cursor:pointer;
-            transition:0.3s;
+        button {
+            margin-top: 30px;
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 14px;
+            background: white;
+            color: black;
+            font-size: 17px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.3s;
         }
 
-        button:hover{
-            transform:translateY(-2px);
+        button:hover {
+            transform: translateY(-2px);
         }
 
-        button:disabled{
-            opacity:0.5;
-            cursor:not-allowed;
-            transform:none;
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
         }
 
-        .loader{
-            display:none;
-            margin-top:20px;
+        .loader {
+            display: none;
+            margin-top: 20px;
         }
 
-        .status-text{
-            margin-top:12px;
-            min-height:20px;
-            color:#cfcfcf;
-            font-size:14px;
+        .status-text {
+            margin-top: 12px;
+            min-height: 20px;
+            color: #cfcfcf;
+            font-size: 14px;
         }
 
-        .loader span{
-            width:12px;
-            height:12px;
-            background:white;
-            display:inline-block;
-            border-radius:50%;
-            margin:0 4px;
-            animation:bounce 0.6s infinite alternate;
+        .loader span {
+            width: 12px;
+            height: 12px;
+            background: white;
+            display: inline-block;
+            border-radius: 50%;
+            margin: 0 4px;
+            animation: bounce 0.6s infinite alternate;
         }
 
-        .loader span:nth-child(2){
-            animation-delay:0.2s;
+        .loader span:nth-child(2) {
+            animation-delay: 0.2s;
         }
 
-        .loader span:nth-child(3){
-            animation-delay:0.4s;
+        .loader span:nth-child(3) {
+            animation-delay: 0.4s;
         }
 
-        @keyframes bounce{
-            from{
-                transform:translateY(0);
-                opacity:0.5;
+        @keyframes bounce {
+            from {
+                transform: translateY(0);
+                opacity: 0.5;
             }
 
-            to{
-                transform:translateY(-10px);
-                opacity:1;
+            to {
+                transform: translateY(-10px);
+                opacity: 1;
             }
         }
 
         /* Subtitle mode selector */
-        .mode-label{
-            display:block;
-            margin-top:22px;
-            margin-bottom:10px;
-            font-size:14px;
-            color:#aaa;
-            text-align:left;
+        .mode-label {
+            display: block;
+            margin-top: 22px;
+            margin-bottom: 10px;
+            font-size: 14px;
+            color: #aaa;
+            text-align: left;
         }
 
-        .mode-selector{
-            display:flex;
-            gap:8px;
-            width:100%;
+        .mode-selector {
+            display: flex;
+            gap: 8px;
+            width: 100%;
         }
 
-        .mode-btn{
-            flex:1;
-            padding:12px 6px;
-            border:1px solid rgba(255,255,255,0.15);
-            border-radius:12px;
-            background:transparent;
-            color:#999;
-            font-size:13px;
-            font-weight:600;
-            cursor:pointer;
-            transition:all 0.3s ease;
-            text-align:center;
-            line-height:1.3;
-            margin-top:0;
-            width:auto;
+        .mode-btn {
+            flex: 1;
+            padding: 12px 6px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            background: transparent;
+            color: #999;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+            line-height: 1.3;
+            margin-top: 0;
+            width: auto;
         }
 
-        .mode-btn:hover{
-            border-color:rgba(255,255,255,0.4);
-            color:#ddd;
-            transform:none;
+        .mode-btn:hover {
+            border-color: rgba(255, 255, 255, 0.4);
+            color: #ddd;
+            transform: none;
         }
 
-        .mode-btn.active{
-            background:white;
-            color:black;
-            border-color:white;
+        .mode-btn.active {
+            background: white;
+            color: black;
+            border-color: white;
         }
 
-        .mode-btn .mode-emoji{
-            display:block;
-            font-size:18px;
-            margin-bottom:4px;
+        .mode-btn .mode-emoji {
+            display: block;
+            font-size: 18px;
+            margin-bottom: 4px;
         }
 
         /* Progress bar for audio extraction */
-        .progress-bar-container{
-            margin-top:16px;
-            width:100%;
-            height:6px;
-            background:rgba(255,255,255,0.1);
-            border-radius:3px;
-            overflow:hidden;
-            display:none;
+        .progress-bar-container {
+            margin-top: 16px;
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+            display: none;
         }
 
-        .progress-bar-fill{
-            height:100%;
-            width:0%;
-            background:linear-gradient(90deg, #888, #fff);
-            border-radius:3px;
-            transition:width 0.3s ease;
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #888, #fff);
+            border-radius: 3px;
+            transition: width 0.3s ease;
         }
-
     </style>
 </head>
+
 <body>
 
     <div class="background-glow"></div>
@@ -257,11 +257,7 @@
 
             <label class="upload-box">
 
-                <input 
-                    type="file" 
-                    id="videoInput"
-                    accept="video/*"
-                >
+                <input type="file" id="videoInput" accept="video/*">
 
                 <div class="upload-icon">🎬</div>
 
@@ -338,7 +334,7 @@
 
         videoInput.addEventListener("change", () => {
 
-            if(videoInput.files.length > 0){
+            if (videoInput.files.length > 0) {
 
                 const file = videoInput.files[0];
                 const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
@@ -352,7 +348,7 @@
 
             e.preventDefault();
 
-            if(videoInput.files.length === 0){
+            if (videoInput.files.length === 0) {
 
                 alert("Please upload a video first");
                 return;
@@ -643,4 +639,5 @@
     </script>
 
 </body>
+
 </html>

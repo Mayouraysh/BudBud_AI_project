@@ -223,8 +223,8 @@ def create_srt(video_path, output_srt, word_group_size=1):
 
     word_group_size controls how many words appear per subtitle entry:
       1     = one word at a time
-      3 or 4 = 3-4 words grouped together
-      5 or 6 = 5-6 words grouped together
+      3-4   = 3-4 words grouped together (alternating)
+      5-6   = 5-6 words grouped together (alternating)
     Word timestamps are always enabled so we can group precisely.
     """
     model = get_model()
@@ -263,14 +263,23 @@ def create_srt(video_path, output_srt, word_group_size=1):
                     continue
             all_words.append({"text": text, "start": segment.start, "end": segment.end})
 
-    # Group words into chunks of word_group_size
-    group_size = max(1, int(word_group_size))
+    # Group words into chunks based on word_group_size
     with open(output_srt, "w", encoding="utf-8") as srt_file:
         counter = 1
-        for i in range(0, len(all_words), group_size):
+        i = 0
+        while i < len(all_words):
+            if word_group_size == 1:
+                group_size = 1
+            elif word_group_size == 4:  # 3-4 words alternating
+                group_size = 3 if (counter % 2 == 1) else 4
+            elif word_group_size == 6:  # 5-6 words alternating
+                group_size = 5 if (counter % 2 == 1) else 6
+            else:
+                group_size = max(1, int(word_group_size))
+
             group = all_words[i : i + group_size]
             if not group:
-                continue
+                break
             text = " ".join(w["text"] for w in group)
             start = format_time(group[0]["start"])
             end = format_time(group[-1]["end"])
@@ -278,6 +287,7 @@ def create_srt(video_path, output_srt, word_group_size=1):
             srt_file.write(f"{start} --> {end}\n")
             srt_file.write(f"{text}\n\n")
             counter += 1
+            i += len(group)
 
 
 @app.get("/")
