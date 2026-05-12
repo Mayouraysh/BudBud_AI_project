@@ -223,8 +223,8 @@ def create_srt(video_path, output_srt, word_group_size=1):
 
     word_group_size controls how many words appear per subtitle entry:
       1     = one word at a time
-      3-4   = 3-4 words grouped together (alternating)
-      5-6   = 5-6 words grouped together (alternating)
+      4     = up to 4 words, grouped until speech pause/cut
+      6     = up to 6 words, grouped until speech pause/cut
     Word timestamps are always enabled so we can group precisely.
     """
     model = get_model()
@@ -263,21 +263,25 @@ def create_srt(video_path, output_srt, word_group_size=1):
                     continue
             all_words.append({"text": text, "start": segment.start, "end": segment.end})
 
-    # Group words into chunks based on word_group_size
+    # Group words based on word_group_size and speech pauses
+    PAUSE_THRESHOLD = 0.3  # seconds - consider it a "cut" if gap > 0.3s
     with open(output_srt, "w", encoding="utf-8") as srt_file:
         counter = 1
         i = 0
         while i < len(all_words):
-            if word_group_size == 1:
-                group_size = 1
-            elif word_group_size == 4:  # 3-4 words alternating
-                group_size = 3 if (counter % 2 == 1) else 4
-            elif word_group_size == 6:  # 5-6 words alternating
-                group_size = 5 if (counter % 2 == 1) else 6
-            else:
-                group_size = max(1, int(word_group_size))
-
-            group = all_words[i : i + group_size]
+            group = []
+            max_group_size = 1 if word_group_size == 1 else word_group_size
+            
+            for j in range(i, min(i + max_group_size, len(all_words))):
+                group.append(all_words[j])
+                # Check if there's a significant pause after this word (except for the last word)
+                if j + 1 < len(all_words):
+                    next_word = all_words[j + 1]
+                    gap = next_word["start"] - all_words[j]["end"]
+                    if gap > PAUSE_THRESHOLD:
+                        # Found a cut, stop the group here
+                        break
+            
             if not group:
                 break
             text = " ".join(w["text"] for w in group)
