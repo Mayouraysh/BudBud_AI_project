@@ -36,6 +36,20 @@
             z-index: 0;
         }
 
+        .cursor-glow {
+            position: absolute;
+            width: 280px;
+            height: 280px;
+            pointer-events: none;
+            border-radius: 50%;
+            background: radial-gradient(circle at center, rgba(93, 169, 255, 0.35), transparent 60%);
+            filter: blur(20px);
+            transform: translate(-50%, -50%) scale(0.9);
+            transition: transform 0.18s ease-out, opacity 0.18s ease-out;
+            opacity: 0;
+            z-index: 0;
+        }
+
         .container {
             position: relative;
             z-index: 1;
@@ -274,6 +288,7 @@
 <body>
 
     <div class="background-glow"></div>
+    <div class="cursor-glow" id="cursorGlow"></div>
 
     <div class="container">
 
@@ -340,6 +355,7 @@
 
         const videoInput = document.getElementById("videoInput");
         const uploadBox = document.getElementById("uploadBox");
+        const cursorGlow = document.getElementById("cursorGlow");
         const fileName = document.getElementById("fileName");
         const loader = document.getElementById("loader");
         const statusText = document.getElementById("statusText");
@@ -375,6 +391,31 @@
                 uploadBox.classList.remove("selected");
                 fileName.classList.remove("selected");
             }
+        });
+
+        document.addEventListener("mousemove", (event) => {
+            cursorGlow.style.opacity = "1";
+            cursorGlow.style.left = `${event.clientX}px`;
+            cursorGlow.style.top = `${event.clientY}px`;
+            cursorGlow.style.transform = "translate(-50%, -50%) scale(1)";
+        });
+
+        document.addEventListener("mouseleave", () => {
+            cursorGlow.style.opacity = "0";
+        });
+
+        document.addEventListener("touchmove", (event) => {
+            if (event.touches.length > 0) {
+                const touch = event.touches[0];
+                cursorGlow.style.opacity = "1";
+                cursorGlow.style.left = `${touch.clientX}px`;
+                cursorGlow.style.top = `${touch.clientY}px`;
+                cursorGlow.style.transform = "translate(-50%, -50%) scale(1)";
+            }
+        }, { passive: true });
+
+        document.addEventListener("touchend", () => {
+            cursorGlow.style.opacity = "0";
         });
 
         form.addEventListener("submit", (e) => {
