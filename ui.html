@@ -38,13 +38,14 @@
 
         .cursor-glow {
             position: absolute;
-            width: 280px;
-            height: 280px;
+            width: 320px;
+            height: 320px;
             pointer-events: none;
             border-radius: 50%;
-            background: radial-gradient(circle at center, rgba(93, 169, 255, 0.35), transparent 60%);
-            filter: blur(20px);
-            transform: translate(-50%, -50%) scale(0.9);
+            background: radial-gradient(circle at center, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.08) 30%, transparent 70%);
+            box-shadow: 0 0 120px rgba(255, 255, 255, 0.16);
+            filter: blur(24px);
+            transform: translate(-50%, -50%) scale(0.95);
             transition: transform 0.18s ease-out, opacity 0.18s ease-out;
             opacity: 0;
             z-index: 0;
