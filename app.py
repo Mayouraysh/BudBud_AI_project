@@ -1,3 +1,4 @@
+import gc
 import io
 import json
 import os
@@ -36,7 +37,7 @@ ALLOWED_EXTENSIONS = {
 }
 
 _model = None
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
 SUBTITLE_MODE = os.getenv("SUBTITLE_MODE", "segment").lower()
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "1536"))
 JOB_RETENTION_SECONDS = int(os.getenv("JOB_RETENTION_SECONDS", "3600"))
@@ -136,6 +137,17 @@ def run_transcription_job(job_id):
 
     try:
         create_srt(input_path, output_path)
+
+        # Delete the input file immediately to free disk space
+        try:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+        except OSError:
+            pass
+
+        # Force garbage collection to free RAM on low-memory hosts
+        gc.collect()
+
         with JOBS_LOCK:
             job = JOBS.get(job_id)
             if not job:
@@ -145,6 +157,15 @@ def run_transcription_job(job_id):
             save_job_state(job_id, job)
     except Exception as exc:
         app.logger.exception("Subtitle generation failed")
+
+        # Clean up input file even on failure
+        try:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+        except OSError:
+            pass
+        gc.collect()
+
         with JOBS_LOCK:
             job = JOBS.get(job_id)
             if not job:
