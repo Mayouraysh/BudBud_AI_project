@@ -121,6 +121,12 @@
             transform:translateY(-2px);
         }
 
+        button:disabled{
+            opacity:0.5;
+            cursor:not-allowed;
+            transform:none;
+        }
+
         .loader{
             display:none;
             margin-top:20px;
@@ -163,6 +169,25 @@
             }
         }
 
+        /* Progress bar for audio extraction */
+        .progress-bar-container{
+            margin-top:16px;
+            width:100%;
+            height:6px;
+            background:rgba(255,255,255,0.1);
+            border-radius:3px;
+            overflow:hidden;
+            display:none;
+        }
+
+        .progress-bar-fill{
+            height:100%;
+            width:0%;
+            background:linear-gradient(90deg, #888, #fff);
+            border-radius:3px;
+            transition:width 0.3s ease;
+        }
+
     </style>
 </head>
 <body>
@@ -199,9 +224,13 @@
                 No file selected
             </div>
 
-            <button type="submit">
+            <button type="submit" id="submitBtn">
                 Generate SRT
             </button>
+
+            <div class="progress-bar-container" id="progressBarContainer">
+                <div class="progress-bar-fill" id="progressBarFill"></div>
+            </div>
 
             <div class="loader" id="loader">
                 <span></span>
@@ -221,6 +250,9 @@
         const loader = document.getElementById("loader");
         const statusText = document.getElementById("statusText");
         const form = document.getElementById("uploadForm");
+        const submitBtn = document.getElementById("submitBtn");
+        const progressBarContainer = document.getElementById("progressBarContainer");
+        const progressBarFill = document.getElementById("progressBarFill");
         const POLL_INTERVAL_MS = 3000;
         const MAX_POLL_TRIES = 400;
         const MAX_STATUS_FAILURES = 20;
@@ -230,7 +262,9 @@
 
             if(videoInput.files.length > 0){
 
-                fileName.textContent = videoInput.files[0].name;
+                const file = videoInput.files[0];
+                const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+                fileName.textContent = `${file.name} (${sizeMB} MB)`;
 
             }
 
@@ -249,17 +283,35 @@
 
             const selectedFile = videoInput.files[0];
 
-            statusText.textContent = "Queued...";
+            statusText.textContent = "Extracting audio from video in browser...";
             loader.style.display = "block";
-            uploadInChunksAndProcess(selectedFile)
+            submitBtn.disabled = true;
+            progressBarContainer.style.display = "block";
+            progressBarFill.style.width = "0%";
+
+            extractAudioFromVideo(selectedFile)
+                .then(audioBlob => {
+                    const audioSizeMB = (audioBlob.size / (1024 * 1024)).toFixed(1);
+                    const videoSizeMB = (selectedFile.size / (1024 * 1024)).toFixed(1);
+                    statusText.textContent = `Audio extracted! ${videoSizeMB} MB video → ${audioSizeMB} MB audio. Uploading...`;
+                    progressBarContainer.style.display = "none";
+
+                    // Use the original video filename but with .wav extension for the server
+                    const audioFileName = selectedFile.name.replace(/\.[^/.]+$/, "") + ".wav";
+
+                    return uploadInChunksAndProcess(audioBlob, audioFileName, selectedFile.name);
+                })
                 .then(() => {
                     loader.style.display = "none";
                     statusText.textContent = "Download ready.";
                     fileName.textContent = "Done! Subtitle downloaded.";
+                    submitBtn.disabled = false;
                 })
                 .catch(error => {
                     loader.style.display = "none";
+                    progressBarContainer.style.display = "none";
                     statusText.textContent = "";
+                    submitBtn.disabled = false;
 
                     const fallbackMessage = "Upload or processing failed on free hosting. Please retry.";
                     alert(error.message || fallbackMessage);
@@ -269,11 +321,143 @@
 
         });
 
-        async function uploadInChunksAndProcess(selectedFile) {
+        /**
+         * Extract audio from a video file using the Web Audio API.
+         * Returns a WAV Blob containing the audio track.
+         */
+        async function extractAudioFromVideo(videoFile) {
+            statusText.textContent = "Reading video file...";
+            progressBarFill.style.width = "10%";
+
+            // Read the file as an ArrayBuffer
+            const arrayBuffer = await videoFile.arrayBuffer();
+
+            statusText.textContent = "Decoding audio from video (this may take a moment)...";
+            progressBarFill.style.width = "30%";
+
+            // Decode the audio using Web Audio API
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+            let audioBuffer;
+            try {
+                audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            } catch (decodeError) {
+                // If the browser can't decode the audio, fall back to uploading the original video
+                console.warn("Browser could not decode audio, falling back to video upload:", decodeError);
+                audioContext.close();
+                throw new Error(
+                    "Your browser could not extract audio from this video format. " +
+                    "Try a different browser (Chrome works best) or convert your video to MP4 first."
+                );
+            }
+
+            statusText.textContent = "Encoding audio as WAV...";
+            progressBarFill.style.width = "70%";
+
+            // Encode as WAV — downsample to 16kHz mono (Whisper's preferred format)
+            const wavBlob = audioBufferToWav(audioBuffer, 16000);
+
+            progressBarFill.style.width = "100%";
+            audioContext.close();
+
+            return wavBlob;
+        }
+
+        /**
+         * Convert an AudioBuffer to a WAV Blob.
+         * Downsamples to targetSampleRate and mixes to mono for Whisper.
+         */
+        function audioBufferToWav(audioBuffer, targetSampleRate) {
+            // Mix down to mono
+            const numberOfChannels = audioBuffer.numberOfChannels;
+            const originalSampleRate = audioBuffer.sampleRate;
+            const originalLength = audioBuffer.length;
+
+            // Get mono channel data (average all channels)
+            let monoData;
+            if (numberOfChannels === 1) {
+                monoData = audioBuffer.getChannelData(0);
+            } else {
+                monoData = new Float32Array(originalLength);
+                for (let ch = 0; ch < numberOfChannels; ch++) {
+                    const channelData = audioBuffer.getChannelData(ch);
+                    for (let i = 0; i < originalLength; i++) {
+                        monoData[i] += channelData[i];
+                    }
+                }
+                for (let i = 0; i < originalLength; i++) {
+                    monoData[i] /= numberOfChannels;
+                }
+            }
+
+            // Downsample to target sample rate using linear interpolation
+            let finalData;
+            if (originalSampleRate !== targetSampleRate) {
+                const ratio = originalSampleRate / targetSampleRate;
+                const newLength = Math.round(originalLength / ratio);
+                finalData = new Float32Array(newLength);
+                for (let i = 0; i < newLength; i++) {
+                    const srcIndex = i * ratio;
+                    const srcIndexFloor = Math.floor(srcIndex);
+                    const srcIndexCeil = Math.min(srcIndexFloor + 1, originalLength - 1);
+                    const frac = srcIndex - srcIndexFloor;
+                    finalData[i] = monoData[srcIndexFloor] * (1 - frac) + monoData[srcIndexCeil] * frac;
+                }
+            } else {
+                finalData = monoData;
+            }
+
+            // Convert float32 samples to 16-bit PCM
+            const numSamples = finalData.length;
+            const bytesPerSample = 2;
+            const dataLength = numSamples * bytesPerSample;
+            const buffer = new ArrayBuffer(44 + dataLength);
+            const view = new DataView(buffer);
+
+            // WAV header
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + dataLength, true);
+            writeString(view, 8, 'WAVE');
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true);               // chunk size
+            view.setUint16(20, 1, true);                 // PCM format
+            view.setUint16(22, 1, true);                 // mono
+            view.setUint32(24, targetSampleRate, true);   // sample rate
+            view.setUint32(28, targetSampleRate * bytesPerSample, true); // byte rate
+            view.setUint16(32, bytesPerSample, true);    // block align
+            view.setUint16(34, 16, true);                // bits per sample
+            writeString(view, 36, 'data');
+            view.setUint32(40, dataLength, true);
+
+            // Write PCM samples
+            let offset = 44;
+            for (let i = 0; i < numSamples; i++) {
+                let sample = finalData[i];
+                // Clamp
+                sample = Math.max(-1, Math.min(1, sample));
+                // Convert to 16-bit integer
+                view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+                offset += 2;
+            }
+
+            return new Blob([buffer], { type: 'audio/wav' });
+        }
+
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+
+        /**
+         * Upload a blob (audio) in chunks and start processing.
+         * originalVideoName is kept for naming the final SRT file.
+         */
+        async function uploadInChunksAndProcess(audioBlob, audioFileName, originalVideoName) {
             const initResponse = await fetch("/upload/init", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ filename: selectedFile.name })
+                body: JSON.stringify({ filename: audioFileName })
             });
             const initPayload = await safeJson(initResponse);
             if (!initResponse.ok || !initPayload.upload_id) {
@@ -281,15 +465,15 @@
             }
 
             const uploadId = initPayload.upload_id;
-            const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE_BYTES);
+            const totalChunks = Math.ceil(audioBlob.size / CHUNK_SIZE_BYTES);
             for (let index = 0; index < totalChunks; index += 1) {
                 const start = index * CHUNK_SIZE_BYTES;
-                const end = Math.min(start + CHUNK_SIZE_BYTES, selectedFile.size);
-                const chunk = selectedFile.slice(start, end);
+                const end = Math.min(start + CHUNK_SIZE_BYTES, audioBlob.size);
+                const chunk = audioBlob.slice(start, end);
                 const formData = new FormData();
-                formData.append("chunk", chunk, `${selectedFile.name}.part${index}`);
+                formData.append("chunk", chunk, `${audioFileName}.part${index}`);
 
-                statusText.textContent = `Uploading chunks... ${index + 1}/${totalChunks}`;
+                statusText.textContent = `Uploading audio... ${index + 1}/${totalChunks}`;
                 const chunkResponse = await fetch(`/upload/chunk/${uploadId}`, {
                     method: "POST",
                     body: formData
@@ -310,10 +494,10 @@
             }
 
             statusText.textContent = "Processing...";
-            await waitForJobAndDownload(completePayload.job_id);
+            await waitForJobAndDownload(completePayload.job_id, originalVideoName);
         }
 
-        async function waitForJobAndDownload(jobId) {
+        async function waitForJobAndDownload(jobId, originalVideoName) {
             let statusFailures = 0;
             for (let attempt = 0; attempt < MAX_POLL_TRIES; attempt += 1) {
                 let response;
@@ -339,7 +523,7 @@
                 if (payload.status === "done") {
                     statusText.textContent = "Download ready.";
                     const downloadUrl = payload.download_url || `/download/${jobId}`;
-                    downloadFile(downloadUrl, videoInput.files[0].name);
+                    downloadFile(downloadUrl, originalVideoName);
                     return;
                 }
 

@@ -16,6 +16,7 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 
 ALLOWED_EXTENSIONS = {
+    # Video formats (kept for backward compatibility / fallback)
     ".mp4",
     ".mov",
     ".mkv",
@@ -24,6 +25,14 @@ ALLOWED_EXTENSIONS = {
     ".m4v",
     ".mpeg",
     ".mpg",
+    # Audio formats (browser-extracted audio)
+    ".wav",
+    ".mp3",
+    ".ogg",
+    ".flac",
+    ".m4a",
+    ".aac",
+    ".weba",
 }
 
 _model = None
