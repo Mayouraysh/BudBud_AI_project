@@ -182,6 +182,25 @@
             font-size: 14px;
         }
 
+        .retry-btn {
+            margin-top: 12px;
+            padding: 10px 20px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.28s ease;
+            display: none;
+        }
+
+        .retry-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+
         .loader span {
             width: 12px;
             height: 12px;
@@ -347,6 +366,7 @@
                 <span></span>
             </div>
             <div class="status-text" id="statusText"></div>
+            <button class="retry-btn" id="retryBtn">Retry Upload</button>
 
         </form>
 
@@ -365,11 +385,14 @@
         const progressBarContainer = document.getElementById("progressBarContainer");
         const progressBarFill = document.getElementById("progressBarFill");
         const modeBtns = document.querySelectorAll(".mode-btn");
+        const retryBtn = document.getElementById("retryBtn");
         const POLL_INTERVAL_MS = 3000;
         const MAX_POLL_TRIES = 400;
         const MAX_STATUS_FAILURES = 20;
         const CHUNK_SIZE_BYTES = 16 * 1024 * 1024; // 16 MB chunks for faster uploads
         let selectedWordGroupSize = 1;
+        let currentJobId = null;
+        let currentSelectedFile = null;
 
         // Mode selector toggle
         modeBtns.forEach(btn => {
@@ -430,8 +453,20 @@
 
             }
 
-            const selectedFile = videoInput.files[0];
+            currentSelectedFile = videoInput.files[0];
+            startProcessing(currentSelectedFile);
 
+        });
+
+        retryBtn.addEventListener("click", () => {
+            if (currentSelectedFile) {
+                retryBtn.style.display = "none";
+                startProcessing(currentSelectedFile);
+            }
+        });
+
+        function startProcessing(selectedFile) {
+            retryBtn.style.display = "none";
             statusText.textContent = "Extracting audio from video in browser...";
             loader.style.display = "block";
             submitBtn.disabled = true;
@@ -455,6 +490,7 @@
                     statusText.textContent = "Download ready.";
                     fileName.textContent = "Done! Subtitle downloaded.";
                     submitBtn.disabled = false;
+                    retryBtn.style.display = "none";
                 })
                 .catch(error => {
                     loader.style.display = "none";
@@ -467,8 +503,7 @@
 
                     console.log(error);
                 });
-
-        });
+        }
 
         /**
          * Extract audio from a video file using the Web Audio API.
@@ -647,6 +682,7 @@
         }
 
         async function waitForJobAndDownload(jobId, originalVideoName) {
+            currentJobId = jobId;
             let statusFailures = 0;
             for (let attempt = 0; attempt < MAX_POLL_TRIES; attempt += 1) {
                 let response;
@@ -677,7 +713,16 @@
                 }
 
                 if (payload.status === "error") {
-                    throw new Error(payload.error || "Transcription failed");
+                    const errorMsg = payload.error || "Transcription failed";
+                    if (errorMsg.includes("Server restarted")) {
+                        statusText.textContent = "Server restarted during processing.";
+                        retryBtn.style.display = "block";
+                        loader.style.display = "none";
+                        submitBtn.disabled = false;
+                        return;
+                    } else {
+                        throw new Error(errorMsg);
+                    }
                 }
 
                 if (attempt > 0 && attempt % 8 === 0) {
