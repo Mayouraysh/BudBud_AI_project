@@ -9,6 +9,11 @@ import time
 import uuid
 from pathlib import Path
 
+try:
+    import torch
+except ImportError:
+    torch = None
+
 from faster_whisper import WhisperModel
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
@@ -38,6 +43,8 @@ ALLOWED_EXTENSIONS = {
 
 _model = None
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "").strip().lower()
+WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "").strip().lower()
 # SUBTITLE_MODE is now per-request (sent from the UI), not a global setting.
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "1536"))
 JOB_RETENTION_SECONDS = int(os.getenv("JOB_RETENTION_SECONDS", "3600"))
@@ -179,11 +186,28 @@ def run_transcription_job(job_id):
 def get_model():
     global _model
     if _model is None:
+        device = WHISPER_DEVICE
+        if not device:
+            device = "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
+
+        if device == "cuda" and (torch is None or not torch.cuda.is_available()):
+            app.logger.warning("CUDA requested but no GPU was found; falling back to CPU")
+            device = "cpu"
+
+        compute_type = WHISPER_COMPUTE_TYPE
+        if not compute_type:
+            compute_type = "float16" if device == "cuda" else "int8"
+
+        if device == "cpu" and compute_type == "float16":
+            app.logger.warning("float16 compute_type is not supported on CPU; switching to int8")
+            compute_type = "int8"
+
         _model = WhisperModel(
             WHISPER_MODEL_SIZE,
-            device="cpu",
-            compute_type="int8",
+            device=device,
+            compute_type=compute_type,
         )
+        app.logger.info(f"Loaded WhisperModel size={WHISPER_MODEL_SIZE} device={device} compute_type={compute_type}")
     return _model
 
 
