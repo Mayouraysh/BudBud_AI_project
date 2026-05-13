@@ -79,9 +79,9 @@
 
         .upload-box:hover {
             border-color: #cbd5e1;
-            transform: translateY(-6px);
+            transform: translateY(-4px);
             background: #eef2ff;
-            box-shadow: 0 24px 50px rgba(15, 23, 42, 0.12);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         }
 
         .upload-box.selected {
@@ -151,10 +151,10 @@
         }
 
         button:not(.hero-btn):hover {
-            transform: translateY(-6px);
+            transform: translateY(-4px);
             background: #f8fafc;
             border-color: #cbd5e1;
-            box-shadow: 0 28px 58px rgba(15, 23, 42, 0.14);
+            box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
         }
 
         button:not(.hero-btn):disabled {
@@ -249,15 +249,27 @@
             border-color: #cbd5e1;
             background: #f8fafc;
             color: #0f172a;
-            transform: translateY(-4px);
-            box-shadow: 0 24px 40px rgba(15, 23, 42, 0.12);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
         }
 
         .mode-btn.active {
-            background: #ffffff;
+            background: linear-gradient(#ffffff, #ffffff) padding-box, linear-gradient(45deg, #3776ab, #ffd43b) border-box;
             color: #0f172a;
-            border-color: #93c5fd;
-            box-shadow: 0 16px 34px rgba(59, 130, 246, 0.12);
+            border: 2px solid transparent;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+        }
+
+        #modeBtn1.active {
+            background: linear-gradient(#ffffff, #ffffff) padding-box, linear-gradient(45deg, #3776ab, #ffd43b) border-box;
+        }
+
+        #modeBtn4.active {
+            background: linear-gradient(#ffffff, #ffffff) padding-box, linear-gradient(45deg, #e34f26, #f06529) border-box;
+        }
+
+        #modeBtn6.active {
+            background: linear-gradient(#ffffff, #ffffff) padding-box, linear-gradient(45deg, #1572b6, #33a9dc) border-box;
         }
 
         .mode-btn .mode-emoji {
