@@ -219,6 +219,14 @@
             animation-delay: 0.4s;
         }
 
+        .duration-text {
+            margin-top: 10px;
+            min-height: 20px;
+            color: #9ec7ff;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
         @keyframes bounce {
             from {
                 transform: translateY(0);
@@ -366,6 +374,7 @@
                 <span></span>
             </div>
             <div class="status-text" id="statusText"></div>
+            <div class="duration-text" id="durationText"></div>
             <button class="retry-btn" id="retryBtn">Retry Upload</button>
 
         </form>
@@ -380,6 +389,7 @@
         const fileName = document.getElementById("fileName");
         const loader = document.getElementById("loader");
         const statusText = document.getElementById("statusText");
+        const durationText = document.getElementById("durationText");
         const form = document.getElementById("uploadForm");
         const submitBtn = document.getElementById("submitBtn");
         const progressBarContainer = document.getElementById("progressBarContainer");
@@ -393,6 +403,8 @@
         let selectedWordGroupSize = 1;
         let currentJobId = null;
         let currentSelectedFile = null;
+        let durationInterval = null;
+        let processingStartTime = null;
 
         // Mode selector toggle
         modeBtns.forEach(btn => {
@@ -467,7 +479,10 @@
 
         function startProcessing(selectedFile) {
             retryBtn.style.display = "none";
+            processingStartTime = Date.now();
+            startDurationTimer();
             statusText.textContent = "Extracting audio from video in browser...";
+            durationText.textContent = "Elapsed: 0s";
             loader.style.display = "block";
             submitBtn.disabled = true;
             progressBarContainer.style.display = "block";
@@ -493,6 +508,8 @@
                     retryBtn.style.display = "none";
                 })
                 .catch(error => {
+                    stopDurationTimer();
+                    durationText.textContent = formatDuration(Date.now() - processingStartTime);
                     loader.style.display = "none";
                     progressBarContainer.style.display = "none";
                     statusText.textContent = "";
@@ -706,6 +723,8 @@
                 statusFailures = 0;
 
                 if (payload.status === "done") {
+                    stopDurationTimer();
+                    durationText.textContent = `Completed in ${formatDuration(Date.now() - processingStartTime)}`;
                     statusText.textContent = "Download ready.";
                     const downloadUrl = payload.download_url || `/download/${jobId}`;
                     downloadFile(downloadUrl, originalVideoName);
@@ -747,7 +766,38 @@
             a.click();
             a.remove();
         }
+        function stopDurationTimer() {
+            if (durationInterval) {
+                clearInterval(durationInterval);
+                durationInterval = null;
+            }
+        }
 
+        function startDurationTimer() {
+            stopDurationTimer();
+            durationInterval = setInterval(() => {
+                if (processingStartTime) {
+                    durationText.textContent = `Elapsed: ${formatDuration(Date.now() - processingStartTime)}`;
+                }
+            }, 500);
+        }
+
+        function formatDuration(milliseconds) {
+            if (!milliseconds || milliseconds < 0) {
+                return "0s";
+            }
+            const totalSeconds = Math.floor(milliseconds / 1000);
+            const seconds = totalSeconds % 60;
+            const minutes = Math.floor(totalSeconds / 60) % 60;
+            const hours = Math.floor(totalSeconds / 3600);
+            if (hours > 0) {
+                return `${hours}h ${minutes}m ${seconds}s`;
+            }
+            if (minutes > 0) {
+                return `${minutes}m ${seconds}s`;
+            }
+            return `${seconds}s`;
+        }
         async function safeJson(response) {
             try {
                 return await response.json();
